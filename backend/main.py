@@ -1,5 +1,8 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
@@ -117,8 +120,8 @@ async def _seed_default_settings():
         "modern_focus_last_decided_at": settings.modern_focus_last_decided_at,
         "modern_realism_max_extreme_margin_pct": str(settings.modern_realism_max_extreme_margin_pct),
         "modern_realism_min_positive_discount_share": str(settings.modern_realism_min_positive_discount_share),
-        "ebay_client_id": settings.ebay_client_id,
-        "ebay_client_secret": settings.ebay_client_secret,
+        # Secrets supplied by ECS remain in the task environment rather than
+        # being copied into the SQLite database.
         "ebay_environment": settings.ebay_environment,
     }
 
@@ -181,3 +184,28 @@ if settings.modern_hunter_enabled:
 @app.get("/health")
 async def health():
     return {"ok": True}
+
+
+# The production image builds the React application into frontend/dist. Keeping
+# it in the FastAPI process avoids a second container and a reverse proxy.
+frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+frontend_assets = frontend_dist / "assets"
+if frontend_assets.is_dir():
+    app.mount("/assets", StaticFiles(directory=frontend_assets), name="assets")
+
+
+@app.get("/", include_in_schema=False)
+async def frontend_index():
+    if not (frontend_dist / "index.html").is_file():
+        return {"message": "Frontend is not built. Use the Vite dev server for local development."}
+    return FileResponse(frontend_dist / "index.html")
+
+
+@app.get("/{path:path}", include_in_schema=False)
+async def frontend_spa(path: str):
+    requested = frontend_dist / path
+    if requested.is_file() and frontend_dist in requested.resolve().parents:
+        return FileResponse(requested)
+    if (frontend_dist / "index.html").is_file():
+        return FileResponse(frontend_dist / "index.html")
+    return {"message": "Frontend is not built. Use the Vite dev server for local development."}

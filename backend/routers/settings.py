@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import Setting
+from backend.config import settings
 from backend.services.currency_service import get_rate_info
 from backend.services.ebay_client import validate_credentials
 
@@ -83,8 +84,9 @@ async def _upsert_setting(db: AsyncSession, key: str, value: str):
 async def get_settings(db: AsyncSession = Depends(get_db)):
     s = await _get_all_settings(db)
     return SettingsResponse(
-        ebay_client_id=s.get("ebay_client_id", ""),
-        ebay_client_secret=s.get("ebay_client_secret", ""),
+        ebay_client_id=settings.ebay_client_id or s.get("ebay_client_id", ""),
+        # Never return the secret to a browser. An empty value means unchanged.
+        ebay_client_secret="",
         ebay_environment=s.get("ebay_environment", "production"),
         shipping_rate_per_kg=float(s.get("shipping_rate_per_kg", "9.0")),
         default_weight_kg=float(s.get("default_weight_kg", "0.5")),
@@ -101,7 +103,7 @@ async def update_settings(body: SettingsUpdate, db: AsyncSession = Depends(get_d
     updates: dict[str, str] = {}
     if body.ebay_client_id is not None:
         updates["ebay_client_id"] = body.ebay_client_id
-    if body.ebay_client_secret is not None:
+    if body.ebay_client_secret:
         updates["ebay_client_secret"] = body.ebay_client_secret
     if body.ebay_environment is not None:
         updates["ebay_environment"] = body.ebay_environment

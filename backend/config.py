@@ -5,6 +5,7 @@ from typing import List
 class Settings(BaseSettings):
     ebay_client_id: str = ""
     ebay_client_secret: str = ""
+    ebay_redirect_uri: str = ""
     ebay_environment: str = "production"
 
     shipping_rate_per_kg: float = 9.00
@@ -44,6 +45,8 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+aiosqlite:///./ebay_arbitrage.db"
     allowed_origins: str = "http://localhost:5173,http://localhost:3000"
+    port: int = 8011
+    log_level: str = "info"
 
     @property
     def origins_list(self) -> List[str]:

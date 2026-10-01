@@ -1,278 +1,143 @@
-# eBay Arbitrage Analyzer
+# eBay Arbitrage Analyzer on AWS
 
-Monitor eBay USA auctions, compare their projected landed cost in Georgia (including $9/kg shipping) against Georgian marketplace prices, and rank every active auction from best to worst profit opportunity.
+A deployment-ready adaptation of [000Janela000/ebay-arbitrage](https://github.com/000Janela000/ebay-arbitrage). The original project finds resale opportunities by comparing eBay auctions with Georgian marketplace prices. This fork preserves that application and adds Docker, AWS infrastructure as code, scheduled execution, persistent storage, and CI/CD.
 
----
-
-## Features
-
-- **Category Profitability Analyzer** — scan all product categories to find the most profitable before committing to deep analysis
-- **Live Auction Dashboard** — real-time table of active auctions sorted by composite opportunity score
-- **Ending Soon Tab** — auctions grouped into time buckets (< 30 min, 30 m–1 h, 1–2 h, 2–6 h) so you know exactly what needs a bid decision right now
-- **Automatic Price Estimation** — uses eBay BIN listings with noise-filtered queries to project final auction prices
-- **Georgian Market Scrapers** - currently pulls live prices from mymarket.ge and extra.ge (disabled sources are skipped automatically)
-- **Composite Scoring** - weighs margin, urgency, demand, confidence, and competition into a 0-100 score
-- **VAT, Shipping & Selling Fees** - configurable landed-cost + net-revenue model
-- **Weight Override** — manually set item weight to recalculate scores
-- **eBay Quota Tracking** — warns when approaching the 5,000/day free API limit
-
----
-
-## Prerequisites
-
-- Python 3.11+
-- Node.js 18+
-- An eBay Developer account (free) with Production API keys
-
----
-
-## Database
-
-The app uses **SQLite** — no database server required. On first startup, `ebay_arbitrage.db` is created automatically in the project root. No migrations to run, no Docker needed.
-
-```
-ebay-arbitrage/
-└── ebay_arbitrage.db   ← auto-created on first uvicorn start
-```
-
-The default connection string in `.env.example` is correct and ready to use:
-
-```
-DATABASE_URL=sqlite+aiosqlite:///./ebay_arbitrage.db
-```
-
----
-
-## Setup
-
-### 1. Get eBay API Keys
-
-1. Go to [developer.ebay.com](https://developer.ebay.com)
-2. Sign in with your eBay account and accept the API License Agreement
-3. Navigate to **My Account → Application Keys**
-4. Click **Get a Production Key**, give it any name
-5. Copy your **App ID (Client ID)** and **Cert ID (Client Secret)**
-
-### 2. Backend
-
-```bash
-# From the project root
-cd C:\...\ebay-arbitrage
-
-# Create and activate virtual environment
-python -m venv venv
-venv\Scripts\activate        # Linux/Mac: source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install Playwright browser (needed for veli.store scraping)
-playwright install chromium
-
-# Copy environment file (credentials can also be entered via the UI)
-copy .env.example .env
-
-# Start the backend (creates ebay_arbitrage.db automatically on first run)
-uvicorn backend.main:app --reload --port 8000
-```
-
-Confirm it's running: `http://localhost:8000/health` → `{"ok": true}`
-
-### 3. Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Open [http://localhost:5173](http://localhost:5173).
-
----
-
-## First-Run Wizard
-
-If no eBay credentials are configured, the app shows a **Setup Wizard** that walks you through registering and entering your API keys.
-
-Alternatively, open **Settings** (gear icon, top right) at any time:
-
-1. Paste your eBay **Client ID** and **Client Secret**
-2. Click **Validate Credentials** — should show a green checkmark
-3. Adjust shipping rate, VAT toggle, and weight defaults as needed
-4. Click **Save Settings**
-
----
-
-## Usage Guide
-
-### Step 1: Analyze Categories
-
-Navigate to **Categories** and click **Analyze All**.
-
-This samples eBay BIN prices and Georgian marketplace prices for each product category to estimate which categories have the highest profit margins. Takes a few minutes and uses ~24 eBay API calls. Results are cached in the database.
-
-### Step 2: Pick Your Category
-
-Click any category card. The card shows:
-- Estimated average profit margin
-- Default item weight (used for shipping cost)
-- Number of active auctions currently in the DB
-
-High-margin categories (electronics, collectibles) appear first.
-
-### Step 3: Refresh Data
-
-Click **Refresh** on the Auction Dashboard. This:
-
-1. Fetches active eBay auctions ending within 48 h in the selected category
-2. Estimates final auction prices using eBay BIN listings (noise words stripped from queries for better matches)
-3. Scrapes Georgian marketplace prices (active sources) with a 30-second timeout per item
-4. Calculates landed cost (item + shipping at $9/kg + optional VAT) and net revenue (after optional selling fees)
-5. Scores and ranks all opportunities on a 0–100 scale
-
-A progress bar shows scraper status per platform.
-
-### Step 4: Browse Opportunities (All Opportunities tab)
-
-| Visual cue | Meaning |
-|---|---|
-| Green row | Profit ≥ 30% |
-| Yellow row | Profit 15–30% |
-| Red row | Profit < 15% |
-| Orange badge | Ends in < 6 h |
-| Red pulsing badge | Ends in < 2 h — act fast |
-
-Click any row to open the **Detail Modal**, which shows:
-- Full cost breakdown (bid + shipping + VAT → landed cost)
-- Georgian listings with similarity scores
-- Score breakdown (margin / urgency / demand / confidence / competition)
-- Confidence adjusted for seller feedback and number of Georgian comparables
-
-Use **Filter Bar** to narrow by category, minimum profit %, maximum bid, or whether Georgian price data exists.
-
-### Step 5: Ending Soon tab
-
-Switch to the **Ending Soon** tab to see a prioritized view of auctions closing in the next 6 hours, grouped into four urgency buckets:
-
-| Bucket | Color |
-|---|---|
-| Ends in < 30 min | 🔴 Red — bid now or miss it |
-| Ends in 30 min – 1 h | 🟠 Orange |
-| Ends in 1 – 2 h | 🟡 Yellow |
-| Ends in 2 – 6 h | ⚪ Gray |
-
-Within each bucket items are sorted by opportunity score (highest first). Click any item to open the full detail modal.
-
-### Step 6: Weight Overrides
-
-If you know an item's actual weight (e.g. from the listing description), open the detail modal and enter it in the weight field. The opportunity score recalculates immediately using the corrected shipping cost.
-
----
-
-## Opportunity Score Formula
-
-```
-score (0-100) = (margin_score x 0.35) + (urgency_score x 0.20)
-              + (demand_score x 0.20) + (confidence_score x 0.15)
-              + (competition_score x 0.10)
-```
-
-| Sub-score | How it's calculated |
-|---|---|
-| **margin_score** | Logistic sigmoid centered at 30% profit margin |
-| **urgency_score** | Log-scale decay - 0.1 at >48 h, 1.0 at <30 min |
-| **demand_score** | Listing/view/order signals from Georgian comparables |
-| **confidence_score** | From price estimator (0.20–0.95), then adjusted (see below) |
-| **competition_score** | `exp(−0.15 × bid_count)` |
-
-### Confidence Adjustments
-
-**Seller feedback (G1)**
-
-| Feedback % | Multiplier |
-|---|---|
-| ≥ 98% | ×1.00 (no penalty) |
-| 90–97% | ×0.85–0.99 (linear) |
-| < 90% | ×0.75 |
-| Unknown | ×0.95 |
-
-**Georgian data richness (G2)**
-
-| Listings found | Multiplier |
-|---|---|
-| 0 | ×0.70 — no comparables, highly uncertain |
-| 1 | ×0.85 — single data point |
-| 2 | ×0.95 — getting reliable |
-| 3+ | ×1.00 — solid median |
-
----
+> **Status:** the Terraform configuration is validated for deployment; this repository does not claim that an AWS environment is currently provisioned.
 
 ## Architecture
 
-```
-backend/
-├── main.py                   # FastAPI app + lifespan (creates DB, seeds settings)
-├── config.py                 # pydantic-settings (reads .env)
-├── database.py               # Async SQLAlchemy + SQLite
-├── models.py                 # ORM models
-├── routers/
-│   ├── auctions.py           # /api/auctions — refresh, list, detail, weight override
-│   ├── opportunities.py      # /api/opportunities — filtered/sorted opportunity list
-│   └── categories.py         # /api/categories — analyze, status
-└── services/
-    ├── ebay_client.py         # OAuth2 + Browse API
-    ├── currency_service.py    # NBG GEL/USD exchange rate
-    ├── price_estimator.py     # BIN-based auction price prediction
-    ├── opportunity_scorer.py  # Composite 0–100 scoring + confidence adjustments
-    └── scraper_orchestrator.py # Runs all three scrapers with 30 s timeout
-
-frontend/
-└── src/
-    ├── App.tsx
-    ├── api/                   # Axios client + React Query hooks
-    ├── pages/
-    │   ├── CategoryAnalyzer.tsx
-    │   └── AuctionDashboard.tsx  # Tab bar: All Opportunities / Ending Soon
-    └── components/
-        ├── OpportunityTable.tsx
-        ├── UpcomingEndingsSection.tsx  # G4 — time-bucket view
-        ├── AuctionDetailModal.tsx
-        ├── FilterBar.tsx
-        └── SettingsPanel.tsx
+```mermaid
+flowchart TD
+    GH[GitHub] --> Actions[GitHub Actions]
+    Actions --> ECR[Amazon ECR]
+    ECR --> Service[ECS Fargate service]
+    User[Browser] --> ALB[Application Load Balancer]
+    ALB --> Service
+    EventBridge[EventBridge schedule] --> Task[One-shot Fargate scan]
+    Task --> Ebay[eBay API]
+    Service --> Ebay
+    Service <--> EFS[(EFS / SQLite)]
+    Task <--> EFS
+    Service --> CW[CloudWatch Logs]
+    Task --> CW
 ```
 
----
+The React UI and FastAPI API run in one container. A single long-running task supports the UI, while the disabled-by-default schedule can run a scan and exit. Public subnets keep the design simple and avoid NAT gateway cost.
 
-## API Reference
+## Technology
 
-```
-GET  /health
-GET  /api/settings
-PUT  /api/settings
-POST /api/settings/validate-ebay
-GET  /api/settings/currency-rate
+Python, FastAPI, React, TypeScript, SQLite, Docker, Terraform, AWS ECS/Fargate, ECR, IAM, EventBridge, EFS, CloudWatch, an Application Load Balancer, and GitHub Actions.
 
-GET  /api/categories
-POST /api/categories/analyze
-GET  /api/categories/analyze/status?job_id=
+## Local setup
 
-GET  /api/auctions?category_id=&sort_by=&order=&min_profit_pct=&max_bid_usd=&has_georgian_data=
-POST /api/auctions/refresh
-GET  /api/auctions/refresh/status?job_id=
-GET  /api/auctions/{ebay_item_id}
-PUT  /api/auctions/{ebay_item_id}/weight
-POST /api/auctions/{ebay_item_id}/rescore
+The app can be explored without eBay credentials, although scans require approved API credentials.
 
-GET  /api/opportunities?sort_by=&order=&min_profit_pct=&has_georgian_data=
+```bash
+cp .env.example .env
+
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+pip install -r requirements-dev.txt
+uvicorn backend.main:app --reload --port 8011
 ```
 
----
+In a second terminal:
 
-## Limitations
+```bash
+cd frontend
+npm ci
+npm run dev
+```
 
-- **eBay API**: 5,000 calls/day on the free tier. The app caches BIN lookups to reduce repeated calls.
-- **Georgian scrapers**: Site structure changes may require selector updates. Each query times out after 30 seconds so a stuck scraper never blocks a full refresh.
-- **Disabled sources**: Some platforms may be disabled in the current runtime environment and are skipped automatically.
-- **Price matching**: Georgian listing similarity is keyword-based. Low-confidence matches (score < 0.3) are excluded from scoring and confidence.
-- **Exchange rate**: Fetched live from the National Bank of Georgia. If unavailable, GEL→USD conversions are skipped (no hardcoded fallback rate).
+Open `http://localhost:5173`. For a production-style local run:
 
+```bash
+docker build -t ebay-arbitrage .
+docker run --rm -p 8011:8011 --env-file .env ebay-arbitrage
+```
+
+## AWS deployment
+
+Prerequisites: Terraform 1.6+, Docker, AWS CLI, valid AWS credentials, and an image pushed to ECR. Copy `terraform/terraform.tfvars.example` to `terraform/terraform.tfvars` and adjust it; that file is ignored by Git.
+
+Create ECR first, push the image, then apply the complete stack:
+
+```bash
+cd terraform
+terraform init
+terraform apply -target=aws_ecr_repository.app
+
+ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)
+ECR_REGISTRY=${ECR_REPOSITORY_URL%%/*}
+aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+cd ..
+docker build -t "$ECR_REPOSITORY_URL:latest" .
+docker push "$ECR_REPOSITORY_URL:latest"
+
+cd terraform
+terraform plan
+terraform apply
+```
+
+PowerShell equivalent:
+
+```powershell
+Set-Location terraform
+terraform init
+terraform apply -target=aws_ecr_repository.app
+
+$ECR_REPOSITORY_URL = terraform output -raw ecr_repository_url
+$ECR_REGISTRY = $ECR_REPOSITORY_URL.Split('/')[0]
+aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin $ECR_REGISTRY
+Set-Location ..
+docker build -t "${ECR_REPOSITORY_URL}:latest" .
+docker push "${ECR_REPOSITORY_URL}:latest"
+
+Set-Location terraform
+terraform plan
+terraform apply
+```
+
+Terraform creates a dedicated VPC, two public subnets, ALB, ECR repository, ECS service/task definition, EFS-backed SQLite storage, CloudWatch logs, and an EventBridge rule. The schedule defaults to `rate(30 minutes)` but remains disabled until `schedule_enabled = true`. Configure categories in the UI before enabling it.
+
+The ALB uses HTTP because custom DNS and TLS are intentionally out of scope. For a personal demo, set `allowed_ingress_cidr` to your public IP in CIDR form rather than leaving it open.
+
+## Credentials and secrets
+
+- **AWS locally:** use an AWS CLI profile, IAM Identity Center, or another standard credential provider. Never place AWS keys in Terraform files.
+- **eBay locally:** copy `.env.example` to `.env`; `.env` is ignored. `EBAY_REDIRECT_URI` is available for future OAuth flows but is not currently required by client-credentials API calls.
+- **eBay on AWS:** create a Secrets Manager secret containing JSON keys `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, and `EBAY_REDIRECT_URI`, then set `ebay_credentials_secret_arn`. ECS injects those keys at runtime, and the task execution role can read only that secret.
+- **GitHub Actions:** create an AWS OIDC deployment role and an S3 state bucket, then add repository variables `AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`, optional `TF_STATE_KEY`, optional `AWS_REGION`, and optional `EBAY_CREDENTIALS_SECRET_ARN`. The deploy workflow is manual (`workflow_dispatch`) and does not deploy on a push.
+
+No secret values belong in GitHub variables, `.env.example`, committed `.tfvars`, or Terraform outputs.
+
+## Validation
+
+```bash
+terraform -chdir=terraform fmt -check
+terraform -chdir=terraform init -backend=false
+terraform -chdir=terraform validate
+docker build .
+```
+
+Pull requests and pushes that change Terraform run the first three checks automatically.
+
+## Cost and persistence notes
+
+This architecture is intentionally understandable rather than free: the ALB, continuously running Fargate task, EFS, and logs incur charges. Disable scheduled scans until needed. SQLite keeps the application migration small, but constrains the service to one web task; see [architecture notes](docs/architecture-notes.md) for the tradeoff.
+
+## Teardown
+
+```bash
+cd terraform
+terraform destroy
+```
+
+EFS deletion removes the SQLite data. Export anything important first.
+
+## Upstream project and licensing
+
+The application is based on the [eBay Arbitrage repository by 000Janela000](https://github.com/000Janela000/ebay-arbitrage). The work in this fork focuses on containerization, AWS infrastructure, Terraform, CI/CD, environment configuration, and deployment documentation; it does not claim authorship of the upstream arbitrage engine.
+
+The upstream repository did not include a license file when this adaptation was prepared. No license has been added or implied here; contact the upstream author before reuse or redistribution beyond what their repository permits.

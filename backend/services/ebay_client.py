@@ -12,6 +12,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from backend.database import AsyncSessionLocal
 from backend.models import ApiUsage, Setting
+from backend.config import settings
 
 EBAY_DAILY_LIMIT = 5000
 EBAY_WARN_THRESHOLD = 200
@@ -61,8 +62,10 @@ async def _get_credentials() -> tuple[str, str, str]:
             select(Setting).where(Setting.key.in_(["ebay_client_id", "ebay_client_secret", "ebay_environment"]))
         )
         rows = {r.key: r.value for r in result.scalars().all()}
-    client_id = rows.get("ebay_client_id", "")
-    client_secret = rows.get("ebay_client_secret", "")
+    # Environment values take precedence in AWS so Secrets Manager values are
+    # not copied into SQLite. Local users can still configure credentials in UI.
+    client_id = settings.ebay_client_id or rows.get("ebay_client_id", "")
+    client_secret = settings.ebay_client_secret or rows.get("ebay_client_secret", "")
     environment = rows.get("ebay_environment", "production")
     if environment == "sandbox":
         base_url = "https://api.sandbox.ebay.com"

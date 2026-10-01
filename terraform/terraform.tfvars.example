@@ -1,0 +1,14 @@
+aws_region         = "us-west-2"
+project_name       = "marketplace-arbitrage"
+environment        = "dev"
+container_cpu      = 256
+container_memory   = 512
+scan_schedule      = "rate(30 minutes)"
+schedule_enabled   = false
+log_retention_days = 14
+
+# Set after pushing an image, or leave null to use <created ECR URL>:latest.
+container_image = null
+
+# Optional: ARN of a JSON-formatted AWS Secrets Manager secret.
+ebay_credentials_secret_arn = null

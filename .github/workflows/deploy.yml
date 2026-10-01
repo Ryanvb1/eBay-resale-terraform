@@ -1,0 +1,66 @@
+name: Deploy to AWS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
+  TF_STATE_KEY: ${{ vars.TF_STATE_KEY || 'ebay-arbitrage/dev.tfstate' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.8"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Configure S3 backend
+        working-directory: terraform
+        run: printf 'terraform { backend "s3" {} }\n' > backend.tf
+      - name: Initialize Terraform remote state
+        working-directory: terraform
+        run: >-
+          terraform init
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=${TF_STATE_KEY}"
+          -backend-config="region=${AWS_REGION}"
+      - name: Create container repository
+        working-directory: terraform
+        run: terraform apply -auto-approve -target=aws_ecr_repository.app -var="aws_region=${AWS_REGION}"
+      - name: Read ECR repository URL
+        id: ecr
+        working-directory: terraform
+        run: echo "repository=$(terraform output -raw ecr_repository_url)" >> "$GITHUB_OUTPUT"
+      - name: Sign in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push image
+        env:
+          REPOSITORY: ${{ steps.ecr.outputs.repository }}
+        run: |
+          docker build -t "${REPOSITORY}:${GITHUB_SHA}" -t "${REPOSITORY}:latest" .
+          docker push "${REPOSITORY}:${GITHUB_SHA}"
+          docker push "${REPOSITORY}:latest"
+      - name: Apply infrastructure
+        working-directory: terraform
+        env:
+          IMAGE: ${{ steps.ecr.outputs.repository }}:${{ github.sha }}
+          EBAY_SECRET_ARN: ${{ vars.EBAY_CREDENTIALS_SECRET_ARN }}
+        run: |
+          args=(-auto-approve -var="aws_region=${AWS_REGION}" -var="container_image=${IMAGE}")
+          if [[ -n "${EBAY_SECRET_ARN}" ]]; then
+            args+=(-var="ebay_credentials_secret_arn=${EBAY_SECRET_ARN}")
+          fi
+          terraform apply "${args[@]}"

@@ -1,6 +1,6 @@
 fastapi>=0.111
 uvicorn[standard]
-sqlalchemy>=2.0
+sqlalchemy[asyncio]>=2.0
 aiosqlite
 httpx
 beautifulsoup4
@@ -9,4 +9,3 @@ cloudscraper
 python-dotenv
 pydantic-settings
 python-multipart
-pytest

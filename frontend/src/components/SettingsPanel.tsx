@@ -49,7 +49,9 @@ export default function SettingsPanel({ open, onClose }: Props) {
   if (!open) return null
 
   const handleSave = async () => {
-    await updateSettings.mutateAsync(form)
+    const payload = { ...form }
+    if (!payload.ebay_client_secret) delete (payload as Partial<typeof form>).ebay_client_secret
+    await updateSettings.mutateAsync(payload)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -113,7 +115,7 @@ export default function SettingsPanel({ open, onClose }: Props) {
                   value={form.ebay_client_secret}
                   onChange={e => setForm(f => ({ ...f, ebay_client_secret: e.target.value }))}
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 pr-10 text-sm font-mono"
-                  placeholder="Your eBay Client Secret"
+                  placeholder="Leave blank to keep the current secret"
                 />
                 <button
                   onClick={() => setShowSecret(v => !v)}
